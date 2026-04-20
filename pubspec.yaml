@@ -1,0 +1,39 @@
+name: book_audio_app
+description: "Ứng dụng đọc sách và nghe audiobook của Bảo"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Thư viện gọi API từ FastAPI
+  http: ^1.2.0
+
+  # Thư viện phát âm thanh cho Audiobook
+  audioplayers: ^5.2.1
+
+  # Thư viện hiển thị ảnh bìa sách từ URL và lưu tạm (cache)
+  cached_network_image: ^3.3.0
+
+  # Hỗ trợ quản lý trạng thái đơn giản (nếu cần)
+  provider: ^6.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Sau này nếu Bảo có file ảnh hoặc audio để trong máy thì sẽ khai báo ở đây
+  # assets:
+  #   - assets/images/
+  #   - assets/audios/
