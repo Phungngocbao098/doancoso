@@ -5,7 +5,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.11.1
+  sdk: '>=3.0.0 <4.0.0' # Cấu hình tương thích rộng rãi với Flutter 3.x
 
 dependencies:
   flutter:
@@ -16,14 +16,20 @@ dependencies:
   # Thư viện gọi API từ FastAPI
   http: ^1.2.0
 
+  # Thư viện chọn trực tiếp tệp (Ảnh, PDF, MP3) từ bộ nhớ thiết bị
+  file_picker: ^8.0.0
+
   # Thư viện phát âm thanh cho Audiobook
-  audioplayers: ^5.2.1
+  audioplayers: ^6.6.0
 
   # Thư viện hiển thị ảnh bìa sách từ URL và lưu tạm (cache)
   cached_network_image: ^3.3.0
 
   # Hỗ trợ quản lý trạng thái đơn giản (nếu cần)
   provider: ^6.1.1
+  flutter_pdfview: ^1.4.4
+  path_provider: ^2.1.5
+  image_picker: ^1.2.2
 
 dev_dependencies:
   flutter_test:
@@ -33,7 +39,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # Sau này nếu Bảo có file ảnh hoặc audio để trong máy thì sẽ khai báo ở đây
-  # assets:
-  #   - assets/images/
-  #   - assets/audios/
+  # Khai báo tài nguyên Assets cục bộ trong ứng dụng (Nếu Bảo cần dùng sau này)
+  #assets:
+    #- assets/images/
+    #- assets/audios/
