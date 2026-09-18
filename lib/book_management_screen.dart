@@ -30,10 +30,12 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
-        if (mounted) {
+        final dynamic rawData = jsonDecode(utf8.decode(response.bodyBytes));
+
+        if (mounted && rawData is List) {
           setState(() {
-            _books = data;
+            // Lọc sạch toàn bộ phần tử null hoặc không hợp lệ ngay từ đầu vào
+            _books = rawData.where((item) => item != null && item['id'] != null).toList();
             _isLoading = false;
           });
         }
@@ -49,27 +51,38 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
 
   // Hàm gọi API xóa sách theo ID đã định danh chính xác
   Future<void> _deleteBook(int bookId, String title) async {
+    if (mounted) {
+      setState(() {
+        _books.removeWhere((item) => item != null && item['id'] == bookId);
+      });
+    }
+
     final url = Uri.parse('http://10.0.2.2:8000/api/books/$bookId');
     try {
       final response = await http.delete(url);
       if (response.statusCode == 200 || response.statusCode == 204) {
         _showSnackBar("Đã xóa thành công sách: $title", Colors.greenAccent);
-        _fetchBooks(); // Tải lại danh sách ngay lập tức để đồng bộ bộ nhớ
+        _fetchBooks(); // Tải lại danh sách chuẩn từ server để đồng bộ hoàn toàn
       } else {
-        _showSnackBar("Xóa thất bại! Mã lỗi: ${response.statusCode}", Colors.redAccent);
+        _showSnackBar("Xóa thất bại trên hệ thống! Đang đồng bộ lại...", Colors.redAccent);
+        _fetchBooks();
       }
     } catch (e) {
       _showSnackBar("Lỗi khi kết nối xóa sách: $e", Colors.redAccent);
+      _fetchBooks();
     }
   }
 
   // Hộp thoại xác nhận trước khi thực hiện xóa (Style Cao Cấp Glassmorphic)
   void _confirmDelete(int bookId, String title) {
+    // Giải quyết triệt để dấu ! ở màu xám đậm nền dialog
+    final dialogBgColor = Colors.grey[950] ?? const Color(0xFF0A0A0A);
+
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
-          backgroundColor: Colors.grey[950]!.withOpacity(0.95),
+          backgroundColor: dialogBgColor.withOpacity(0.95),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: Colors.redAccent.withOpacity(0.3), width: 1),
@@ -87,7 +100,7 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text("HỦY", style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)),
             ),
             ElevatedButton.icon(
@@ -98,7 +111,7 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
                 elevation: 0,
               ),
               onPressed: () {
-                Navigator.of(context).pop();
+                Navigator.of(dialogContext).pop();
                 _deleteBook(bookId, title);
               },
               icon: const Icon(Icons.delete_sweep_rounded, color: Colors.white, size: 18),
@@ -125,6 +138,9 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Giải quyết triệt để dấu ! ở các biến màu palette
+    final containerBgColor = Colors.grey[900] ?? const Color(0xFF121212);
+
     return Scaffold(
       backgroundColor: Colors.black,
       extendBodyBehindAppBar: true,
@@ -147,15 +163,12 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
       ),
       body: Stack(
         children: [
-          // LỚP NỀN 1: HÌNH NỀN KHÔNG GIAN THƯ VIỆN
           Positioned.fill(
             child: Image.network(
               'https://images.unsplash.com/photo-1507842217343-583bb7270b66?q=80&w=1920&auto=format&fit=crop',
               fit: BoxFit.cover,
             ),
           ),
-
-          // LỚP NỀN 2: PHỦ MÀU TỐI & LÀM MỜ NỀN NGHỆ THUẬT
           Positioned.fill(
             child: Container(color: Colors.black.withOpacity(0.75)),
           ),
@@ -165,8 +178,6 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
               child: Container(color: Colors.transparent),
             ),
           ),
-
-          // LỚP 3: NỘI DUNG HIỂN THỊ CHÍNH
           SafeArea(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator(color: Colors.orange))
@@ -176,7 +187,7 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
                 padding: const EdgeInsets.all(24),
                 margin: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.grey[900]!.withOpacity(0.8),
+                  color: containerBgColor.withOpacity(0.8),
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: Colors.white10),
                 ),
@@ -203,8 +214,13 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 itemCount: _books.length,
                 itemBuilder: (context, index) {
-                  // Định danh tách biệt cục bộ theo đúng index của vòng lặp
+                  if (index < 0 || index >= _books.length) {
+                    return const SizedBox.shrink();
+                  }
+
                   final book = _books[index];
+                  if (book == null) return const SizedBox.shrink();
+
                   final int bookId = book['id'] ?? 0;
                   final String title = book['title'] ?? 'Không có tiêu đề';
                   final String author = book['author'] ?? 'Chưa rõ tác giả';
@@ -213,10 +229,10 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
                   final correctedImageUrl = imageUrl.replaceAll('localhost', '10.0.2.2');
 
                   return Container(
-                    key: ValueKey(bookId), // ✨ THÊM KEY: Bắt buộc để Flutter phân biệt trạng thái riêng biệt của từng Item sách, tránh lỗi dính trạng thái bookmark cũ
+                    key: bookId != 0 ? ValueKey("manage_book_${bookId}_$index") : UniqueKey(),
                     margin: const EdgeInsets.only(bottom: 14),
                     decoration: BoxDecoration(
-                      color: Colors.grey[900]!.withOpacity(0.7),
+                      color: containerBgColor.withOpacity(0.7),
                       borderRadius: BorderRadius.circular(15),
                       border: Border.all(color: Colors.white.withOpacity(0.08), width: 1.2),
                       boxShadow: [
@@ -267,7 +283,6 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
                             ),
                           ),
                           const SizedBox(width: 14),
-
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -306,11 +321,12 @@ class _BookManagementScreenState extends State<BookManagementScreen> {
                               ],
                             ),
                           ),
-
                           IconButton(
                             icon: const Icon(Icons.delete_sweep_rounded, color: Colors.redAccent, size: 24),
                             tooltip: "Xóa sách khỏi kho",
-                            onPressed: () => _confirmDelete(bookId, title),
+                            onPressed: bookId != 0
+                                ? () => _confirmDelete(bookId, title)
+                                : () => _showSnackBar("Không thể xóa sách thiếu định danh hợp lệ!", Colors.orange),
                           ),
                         ],
                       ),

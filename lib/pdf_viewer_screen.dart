@@ -65,15 +65,11 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   @override
   void initState() {
     super.initState();
-    _currentPage = widget.initialPage;
+    // ✨ ĐÃ SỬA CHẶN CỨNG RANGEERROR: Đảm bảo trang khởi tạo ban đầu không bị âm
+    _currentPage = widget.initialPage < 0 ? 0 : widget.initialPage;
 
     // Tải file PDF từ URL về bộ nhớ cache của thiết bị
     _downloadAndInitPdf();
-
-    // Nếu là tài khoản thành viên thật thì mới kiểm tra trạng thái bookmark của trang từ database
-    if (!_isGuest) {
-      _checkBookmarkStatus();
-    }
   }
 
   // Tải file PDF online lưu thành file local tạm thời để tránh lỗi hiển thị trực tiếp từ URL
@@ -117,19 +113,30 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     }
   }
 
-  // Kiểm tra trạng thái bookmark hiện tại của cuốn sách từ Server
+  // ✨ ĐÃ SỬA TOÀN DIỆN CHỐNG NULL: Kiểm tra trạng thái bookmark an toàn tuyệt đối
   Future<void> _checkBookmarkStatus() async {
-    if (_isGuest || !mounted) return;
+    if (_isGuest || !mounted || _totalPages <= 0) return;
+
+    // Chụp lại giá trị trang tại thời điểm gọi hàm để tránh bị lệch pha bất đồng bộ khi vuốt nhanh
+    final int snapshotPage = _currentPage;
+    if (snapshotPage < 0 || snapshotPage >= _totalPages) return;
+
     final url = Uri.parse('http://10.0.2.2:8000/api/bookmarks/${widget.username.trim()}');
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {
-        final List<dynamic> bookmarks = jsonDecode(utf8.decode(response.bodyBytes));
-        final isExist = bookmarks.any((item) =>
-        item['book_id'] == widget.bookId &&
-            item['page_number'] == (_currentPage + 1));
+        final List<dynamic>? bookmarks = jsonDecode(utf8.decode(response.bodyBytes));
+        if (bookmarks == null) return;
 
-        if (mounted) {
+        // So sánh bằng giá trị trang đã chụp cứng an toàn và dùng toán tử bọc lót chống dính Null phần tử
+        final isExist = bookmarks.any((item) {
+          if (item == null) return false;
+          final int bId = item['book_id'] ?? 0;
+          final int pNum = item['page_number'] ?? 0;
+          return bId == widget.bookId && pNum == (snapshotPage + 1);
+        });
+
+        if (mounted && _currentPage == snapshotPage) {
           setState(() {
             _isBookmarked = isExist;
           });
@@ -147,17 +154,26 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     // Trì hoãn một chút cho UI ổn định hẳn
     await Future.delayed(const Duration(milliseconds: 300));
 
-    if (mounted) {
-      if (widget.initialPage > 0 && widget.initialPage < _totalPages) {
-        await _pdfViewController?.setPage(widget.initialPage);
+    if (mounted && _totalPages > 0) {
+      // Giới hạn trang nhảy tới phải nằm trong khoảng hợp lệ từ [0 đến _totalPages - 1]
+      int targetPage = widget.initialPage;
+      if (targetPage < 0) targetPage = 0;
+      if (targetPage >= _totalPages) targetPage = _totalPages - 1;
+
+      if (targetPage >= 0 && targetPage < _totalPages) {
+        await _pdfViewController?.setPage(targetPage);
         setState(() {
-          _currentPage = widget.initialPage;
+          _currentPage = targetPage;
         });
       }
-      // Khóa cờ hiệu lại ngay lập tức để giải phóng luồng xử lý luân chuyển trang tự do
       setState(() {
         _hasJumpedToInitialPage = true;
       });
+
+      // Sau khi nhảy trang thành công và có _totalPages cụ thể mới đi check bookmark
+      if (!_isGuest) {
+        _checkBookmarkStatus();
+      }
     }
   }
 
@@ -238,7 +254,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   // Hàm gọi API xử lý đánh dấu trang sách gửi lên FastAPI Server
   Future<void> _toggleBookmarkOnServer(String noteText) async {
-    if (!mounted) return;
+    if (!mounted || _totalPages <= 0 || _currentPage < 0 || _currentPage >= _totalPages) return;
     final url = Uri.parse('http://10.0.2.2:8000/api/bookmarks/toggle');
     try {
       final response = await http.post(
@@ -256,11 +272,11 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         if (mounted) {
           setState(() {
-            _isBookmarked = (data['status'] == 'added');
+            _isBookmarked = (data != null && data['status'] == 'added');
           });
         }
         _showSnackBar(
-          data['message'] ?? "Thao tác thành công!",
+          data?['message'] ?? "Thao tác thành công!",
           _isBookmarked ? Colors.green : Colors.orange,
         );
       } else {
@@ -386,15 +402,14 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                 _safeJumpToInitialPage();
               },
               onPageChanged: (page, total) {
-                // ĐÃ SỬA LỖI 1: Luôn cho phép lắng nghe cập nhật số trang khi vuốt
-                if (page != null && mounted) {
-                  // Chặn cứng đầu dưới và đầu trên khi người dùng vuốt nhanh vượt tầm kiểm soát của PDFView
+                // ✨ ĐÃ SỬA CHẶN CỨNG LỖI OVER-SCROLL KHI VUỐT TAY TẠI TRANG CUỐI
+                if (page != null && mounted && _totalPages > 0) {
                   if (page >= 0 && page < _totalPages) {
                     setState(() {
                       _currentPage = page;
                     });
                     if (!_isGuest) {
-                      _checkBookmarkStatus(); // Cập nhật lại icon bookmark đồng bộ theo đúng trang mới
+                      _checkBookmarkStatus(); // Chạy cực kỳ an toàn vì đã có snapshot bảo vệ bên trong
                     }
                   }
                 }
@@ -415,7 +430,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             ),
         ],
       ),
-      bottomNavigationBar: _isReady
+      bottomNavigationBar: _isReady && _totalPages > 0
           ? Container(
         height: 55,
         color: Colors.grey[900],
@@ -439,10 +454,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               "Trang ${_currentPage + 1} / $_totalPages",
               style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
             ),
-            // ĐÃ SỬA LỖI 2: Thêm lớp bảo vệ chặt chẽ để triệt tiêu lỗi RangeError vượt chỉ mục trang 134
+            // ✨ ĐÃ SỬA CHẶN CHỈ MỤC NÚT NEXT VÀ PHÒNG NGỪA TOTALPAGES TRỐNG
             IconButton(
               icon: const Icon(Icons.arrow_forward_ios, color: Colors.white70, size: 18),
-              onPressed: _currentPage < (_totalPages - 1) && _totalPages > 0
+              onPressed: _currentPage < (_totalPages - 1)
                   ? () {
                 final targetPage = _currentPage + 1;
                 if (targetPage < _totalPages) {

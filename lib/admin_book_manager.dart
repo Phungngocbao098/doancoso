@@ -1,3 +1,4 @@
+// admin_book_manager.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -24,24 +25,34 @@ class _AdminBookManagerState extends State<AdminBookManager> {
 
   // Lấy danh sách sách từ API độc lập
   Future<void> _fetchBooks() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     final url = Uri.parse('http://10.0.2.2:8000/api/shop-books');
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {
-        setState(() {
-          _books = jsonDecode(utf8.decode(response.bodyBytes));
-        });
+        if (mounted) {
+          setState(() {
+            _books = jsonDecode(utf8.decode(response.bodyBytes));
+          });
+        }
       }
     } catch (e) {
       _showSnackBar("Lỗi kết nối server lấy danh sách!", Colors.red);
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
-  // Xóa sách khỏi gian hàng
-  Future<void> _deleteBook(int bookId) async {
+  // Xóa sách khỏi gian hàng (Đã bọc lót ID an toàn chống lỗi màn hình đỏ)
+  Future<void> _deleteBook(dynamic rawBookId) async {
+    if (rawBookId == null) {
+      _showSnackBar("Không thể xóa: ID sách không tồn tại!", Colors.orange);
+      return;
+    }
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -60,12 +71,12 @@ class _AdminBookManagerState extends State<AdminBookManager> {
 
     if (confirm != true) return;
 
-    final url = Uri.parse('http://10.0.2.2:8000/api/shop-books/$bookId');
+    final url = Uri.parse('http://10.0.2.2:8000/api/shop-books/$rawBookId');
     try {
       final response = await http.delete(url);
       if (response.statusCode == 200) {
         _showSnackBar("Đã gỡ sách khỏi gian hàng thành công!", Colors.orange);
-        _fetchBooks();
+        _fetchBooks(); // Tải lại danh sách mượt mà
       } else {
         _showSnackBar("Không thể xóa sách trên Server!", Colors.red);
       }
@@ -74,7 +85,7 @@ class _AdminBookManagerState extends State<AdminBookManager> {
     }
   }
 
-  // Mở BottomSheet thêm sách mới (Đã tối ưu hóa State và báo lỗi chi tiết)
+  // Mở BottomSheet thêm sách mới
   void _openAddBookSheet() {
     final titleCtrl = TextEditingController();
     final authorCtrl = TextEditingController();
@@ -91,7 +102,6 @@ class _AdminBookManagerState extends State<AdminBookManager> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) {
-        // Sử dụng StatefulBuilder để quản lý cập nhật giao diện chọn ảnh bên trong BottomSheet
         return StatefulBuilder(
           builder: (context, setModalState) {
 
@@ -103,7 +113,6 @@ class _AdminBookManagerState extends State<AdminBookManager> {
                   imageQuality: 80,
                 );
                 if (picked != null) {
-                  // PHẢI dùng setModalState để cập nhật UI hiển thị ảnh lập tức
                   setModalState(() {
                     selectedImg = File(picked.path);
                   });
@@ -115,7 +124,6 @@ class _AdminBookManagerState extends State<AdminBookManager> {
 
             // Hàm xử lý gửi dữ liệu lên server khi bấm "Đăng bán"
             Future<void> submitBook() async {
-              // Báo lỗi chi tiết từng trường để Admin dễ debug kiểm tra
               if (titleCtrl.text.trim().isEmpty) {
                 _showSnackBar("Vui lòng nhập Tên sách!", Colors.orange);
                 return;
@@ -147,7 +155,6 @@ class _AdminBookManagerState extends State<AdminBookManager> {
               req.files.add(await http.MultipartFile.fromPath('file', selectedImg!.path));
 
               try {
-                // Hiển thị vòng xoay tải lúc đang upload dữ liệu
                 showDialog(
                   context: context,
                   barrierDismissible: false,
@@ -157,17 +164,17 @@ class _AdminBookManagerState extends State<AdminBookManager> {
                 final streamedRes = await req.send();
                 final res = await http.Response.fromStream(streamedRes);
 
-                Navigator.pop(context); // Đóng hộp thoại xoay tải (Loading)
+                if (context.mounted) Navigator.pop(context); // Đóng Loading Dialog
 
                 if (res.statusCode == 200) {
                   _showSnackBar("Đã đăng bán sách thành công!", Colors.green);
-                  Navigator.pop(context); // Đóng Bottom Sheet
-                  _fetchBooks(); // Tải lại danh sách sách quản lý ngoài màn hình chính
+                  if (context.mounted) Navigator.pop(context); // Đóng Bottom Sheet
+                  _fetchBooks();
                 } else {
                   _showSnackBar("Server từ chối yêu cầu (Lỗi ${res.statusCode})", Colors.red);
                 }
               } catch (e) {
-                Navigator.pop(context); // Đóng hộp thoại xoay tải
+                if (context.mounted) Navigator.pop(context);
                 _showSnackBar("Lỗi kết nối tải sách lên backend: $e", Colors.red);
               }
             }
@@ -242,7 +249,7 @@ class _AdminBookManagerState extends State<AdminBookManager> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           elevation: 3,
                         ),
-                        onPressed: submitBook, // Kích hoạt sự kiện đăng bán
+                        onPressed: submitBook,
                         child: const Text("ĐĂNG BÁN SÁCH", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       ),
                     ),
@@ -258,9 +265,10 @@ class _AdminBookManagerState extends State<AdminBookManager> {
   }
 
   void _showSnackBar(String m, Color c) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(m),
+        content: Text(m, style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: c,
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
@@ -274,6 +282,7 @@ class _AdminBookManagerState extends State<AdminBookManager> {
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
         title: const Text("Quản Lý Sách Bán", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
         actions: [
           IconButton(icon: const Icon(Icons.refresh, color: Colors.orange), onPressed: _fetchBooks),
@@ -287,8 +296,32 @@ class _AdminBookManagerState extends State<AdminBookManager> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         itemCount: _books.length,
         itemBuilder: (context, index) {
+          // ✨ BỔ SUNG 1: Chặn đứng lỗi RangeError lệch chỉ mục mảng khi vừa thực hiện xóa phần tử
+          if (index >= _books.length) {
+            return const SizedBox.shrink();
+          }
+
           final book = _books[index];
+
+          // ✨ BỔ SUNG 2: Chặn đứng lỗi Null Check nếu item book bị rỗng trong quá trình re-render luồng song song
+          if (book == null) {
+            return const SizedBox.shrink();
+          }
+
+          final dynamic bookId = book['id'];
+
+          // Chuyển đổi localhost sang IP máy ảo Android để không lỗi hiển thị ảnh
+          String rawImgUrl = book['image_path'] ?? book['image_url'] ?? '';
+          String correctedImgUrl = rawImgUrl.replaceAll('localhost', '10.0.2.2');
+
+          // Ép kiểu giá tiền an toàn chống lỗi định dạng số nguyên/số thực
+          final num rawPrice = book['price'] ?? 0;
+          final int priceInt = rawPrice.toInt();
+          final String formattedPrice = "${priceInt.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')} đ";
+
           return Container(
+            // ✨ BỔ SUNG 3: Thêm Khóa Key phân định độc nhất cho Widget, tránh lỗi xung đột dải State cũ của Flutter
+            key: bookId != null ? ValueKey("shop_book_$bookId") : UniqueKey(),
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -300,8 +333,9 @@ class _AdminBookManagerState extends State<AdminBookManager> {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    book['image_path'] ?? 'https://picsum.photos/100/150',
+                  child: correctedImgUrl.isNotEmpty
+                      ? Image.network(
+                    correctedImgUrl,
                     width: 60,
                     height: 80,
                     fit: BoxFit.cover,
@@ -309,6 +343,10 @@ class _AdminBookManagerState extends State<AdminBookManager> {
                       width: 60, height: 80, color: Colors.grey[900],
                       child: const Icon(Icons.broken_image, color: Colors.white24),
                     ),
+                  )
+                      : Container(
+                    width: 60, height: 80, color: Colors.grey[900],
+                    child: const Icon(Icons.book, color: Colors.white24),
                   ),
                 ),
                 const SizedBox(width: 15),
@@ -316,17 +354,33 @@ class _AdminBookManagerState extends State<AdminBookManager> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(book['title'] ?? '', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(
+                        book['title'] ?? 'Không có tiêu đề',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       const SizedBox(height: 4),
-                      Text("Tác giả: ${book['author']}", style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                      Text(
+                        "Tác giả: ${book['author'] ?? 'Ẩn danh'}",
+                        style: const TextStyle(color: Colors.white38, fontSize: 12),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       const SizedBox(height: 6),
-                      Text("${book['price']} đ", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 14)),
+                      Text(
+                        formattedPrice,
+                        style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
                     ],
                   ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                  onPressed: () => _deleteBook(book['id']),
+                  // ✨ BỔ SUNG 4: Chặn điều kiện check ID null cục bộ trước khi truyền vào hàm xử lý bất đồng bộ
+                  onPressed: bookId != null
+                      ? () => _deleteBook(bookId)
+                      : () => _showSnackBar("Không thể định danh cuốn sách này!", Colors.orange),
                 )
               ],
             ),

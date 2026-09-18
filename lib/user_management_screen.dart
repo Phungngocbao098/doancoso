@@ -30,10 +30,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
-        if (mounted) {
+        final dynamic rawData = jsonDecode(utf8.decode(response.bodyBytes));
+        if (mounted && rawData is List) {
           setState(() {
-            _users = data;
+            // Lọc sạch toàn bộ phần tử null hoặc không hợp lệ ngay từ đầu vào
+            _users = rawData.where((item) => item != null && item['id'] != null).toList();
             _isLoading = false;
           });
         }
@@ -49,30 +50,42 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   // Gọi API thực hiện xóa tài khoản người dùng theo ID
   Future<void> _deleteUser(int userId, String username) async {
+    // ✨ BỔ SUNG LUỒNG XÓA CỤC BỘ: Xóa phần tử khỏi UI ngay lập tức để tránh lỗi lệch pha chỉ mục mảng
+    if (mounted) {
+      setState(() {
+        _users.removeWhere((item) => item != null && item['id'] == userId);
+      });
+    }
+
     final url = Uri.parse('http://10.0.2.2:8000/api/admin/users/$userId');
     try {
       final response = await http.delete(url);
-      final responseData = jsonDecode(utf8.decode(response.bodyBytes));
 
       if (response.statusCode == 200) {
         _showSnackBar("Đã xóa tài khoản: $username", Colors.greenAccent);
-        _fetchUsers(); // Tải lại danh sách sau khi xóa thành công để đồng bộ bộ nhớ
+        _fetchUsers(); // Tải lại danh sách chuẩn từ server để đồng bộ hoàn toàn
       } else {
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
         String errMsg = responseData['detail'] ?? "Xóa thất bại!";
         _showSnackBar(errMsg, Colors.redAccent);
+        _fetchUsers(); // Kéo lại dữ liệu nếu xảy ra lỗi để khôi phục UI
       }
     } catch (e) {
       _showSnackBar("Lỗi khi kết nối xóa tài khoản: $e", Colors.redAccent);
+      _fetchUsers();
     }
   }
 
   // Hộp thoại Glassmorphic xác nhận trước khi thực hiện xóa tài khoản
   void _confirmDelete(int userId, String username) {
+    // ✨ ĐÃ SỬA: Loại bỏ dấu ! tránh lỗi crash khi map bảng màu palette chưa tải kịp
+    final dialogBgColor = Colors.grey[950] ?? const Color(0xFF0A0A0A);
+
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          backgroundColor: Colors.grey[950]!.withOpacity(0.95),
+          backgroundColor: dialogBgColor.withOpacity(0.95),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: Colors.redAccent.withOpacity(0.3), width: 1),
@@ -118,8 +131,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: backgroundColor,
+        content: Text(message, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: backgroundColor.withOpacity(0.9),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         duration: const Duration(seconds: 3),
       ),
     );
@@ -127,13 +142,18 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ✨ ĐÃ SỬA: Ép kiểu fallback an toàn thay cho dấu ! gài mìn cũ
+    final containerBgColor = Colors.grey[900] ?? const Color(0xFF121212);
+
     return Scaffold(
       extendBodyBehindAppBar: true,
+      backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text("Quản Lý Tài Khoản", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: Colors.black.withOpacity(0.4),
         elevation: 0,
         centerTitle: true,
+        foregroundColor: Colors.white,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
@@ -144,7 +164,6 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       ),
       body: Stack(
         children: [
-          // Ảnh nền kết nối mạng lưới công nghệ cao tạo không gian PR đồng bộ cực nghệ
           Positioned.fill(
             child: Image.network(
               'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?q=80&w=1920&auto=format&fit=crop',
@@ -168,7 +187,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 padding: const EdgeInsets.all(20),
                 margin: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.grey[900]!.withOpacity(0.8),
+                  color: containerBgColor.withOpacity(0.8),
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: Colors.white10),
                 ),
@@ -193,7 +212,14 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 itemCount: _users.length,
                 itemBuilder: (context, index) {
+                  // ✨ BỔ SUNG: Kiểm soát chặt chẽ biên mảng, triệt tiêu triệt để RangeError
+                  if (index < 0 || index >= _users.length) {
+                    return const SizedBox.shrink();
+                  }
+
                   final user = _users[index];
+                  if (user == null) return const SizedBox.shrink();
+
                   final int userId = user['id'] ?? 0;
                   final String username = user['username'] ?? 'Không tên';
                   final bool isUserAdmin = user['is_admin'] ?? false;
@@ -205,9 +231,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   }
 
                   return Container(
+                    key: userId != 0 ? ValueKey("manage_user_${userId}_$index") : UniqueKey(),
                     margin: const EdgeInsets.only(bottom: 14),
                     decoration: BoxDecoration(
-                      color: Colors.grey[900]!.withOpacity(0.8),
+                      color: containerBgColor.withOpacity(0.8),
                       borderRadius: BorderRadius.circular(15),
                       border: Border.all(
                         color: isUserAdmin
@@ -275,7 +302,6 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                           style: const TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w500),
                         ),
                       ),
-                      // Nếu là tài khoản quản trị viên gốc mang tên 'admin', ẩn hoàn toàn nút xóa để tránh xoá nhầm
                       trailing: username.trim().toLowerCase() == 'admin'
                           ? null
                           : IconButton(
